@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main (main) where
 
@@ -7,8 +8,12 @@ import           Data.Function (on)
 import qualified Data.ByteString.Lazy.Char8 as BS
 import           Text.JSON.Canonical
 
+#if !(MIN_VERSION_base(4,8,0))
+import Control.Applicative (Applicative(..), (<$>))
+#endif
+
 import qualified Data.Aeson as Aeson (Value (..), eitherDecode)
-import           Data.String (fromString)
+import           Data.String (IsString, fromString)
 import qualified Data.Vector         as V  (fromList)
 import qualified Data.HashMap.Strict as HM (fromList)
 
@@ -61,10 +66,13 @@ toAeson :: JSValue -> Aeson.Value
 toAeson JSNull        = Aeson.Null
 toAeson (JSBool b)    = Aeson.Bool b
 toAeson (JSNum n)     = Aeson.Number (fromIntegral n)
-toAeson (JSString s)  = Aeson.String (fromString s)
+toAeson (JSString s)  = Aeson.String (toAesonStr s)
 toAeson (JSArray xs)  = Aeson.Array  $ V.fromList  [ toAeson x | x <- xs ]
-toAeson (JSObject xs) = Aeson.Object $ HM.fromList [ (fromString k, toAeson v)
+toAeson (JSObject xs) = Aeson.Object $ HM.fromList [ (toAesonStr k, toAeson v)
                                                    | (k, v) <- xs ]
+
+toAesonStr :: IsString s => JSString -> s
+toAesonStr = fromString . fromJSString
 
 instance Arbitrary JSValue where
   arbitrary =
@@ -73,13 +81,13 @@ instance Arbitrary JSValue where
       [ (1, pure JSNull)
       , (1, JSBool   <$> arbitrary)
       , (2, JSNum    <$> arbitrary)
-      , (2, JSString . getASCIIString <$> arbitrary)
-      , (3, JSArray                <$> resize (sz `div` 2) arbitrary)
-      , (3, JSObject . mapFirst getASCIIString .  noDupFields <$> resize (sz `div` 2) arbitrary)
+      , (2, JSString <$> arbitrary)
+      , (3, JSArray  <$> resize (sz `div` 2) arbitrary)
+      , (3, JSObject . noDupFields
+                     <$> resize (sz `div` 2) arbitrary)
       ]
     where
       noDupFields = nubBy (\(x,_) (y,_) -> x==y)
-      mapFirst f = map (\(x, y) -> (f x, y))
 
   shrink JSNull        = []
   shrink (JSBool    _) = []
@@ -101,4 +109,8 @@ instance Arbitrary Int54 where
       upperbound =   999999999999999  -- 15 decimal digits
       lowerbound = (-999999999999999)
   shrink = shrinkIntegral
+
+instance Arbitrary JSString where
+  arbitrary = toJSString . getASCIIString <$> arbitrary
+  shrink  s = [ toJSString s' | s' <- shrink (fromJSString s) ]
 

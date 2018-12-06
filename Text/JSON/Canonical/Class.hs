@@ -59,11 +59,11 @@ class FromJSON m a where
 
 -- | Used in the 'ToJSON' instance for 'Map'
 class ToObjectKey m a where
-  toObjectKey :: a -> m String
+  toObjectKey :: a -> m JSString
 
 -- | Used in the 'FromJSON' instance for 'Map'
 class FromObjectKey m a where
-  fromObjectKey :: String -> m (Maybe a)
+  fromObjectKey :: JSString -> m (Maybe a)
 
 -- | Monads in which we can report schema errors
 class (Applicative m, Monad m) => ReportSchemaErrors m where
@@ -83,7 +83,7 @@ expectedButGotValue descr val = expected descr (Just (describeValue val))
     describeValue (JSArray  _) = "array"
     describeValue (JSObject _) = "object"
 
-unknownField :: ReportSchemaErrors m => String -> m a
+unknownField :: ReportSchemaErrors m => JSString -> m a
 unknownField field = expected ("field " ++ show field) Nothing
 
 {-------------------------------------------------------------------------------
@@ -91,10 +91,10 @@ unknownField field = expected ("field " ++ show field) Nothing
 -------------------------------------------------------------------------------}
 
 instance Monad m => ToObjectKey m String where
-  toObjectKey = return
+  toObjectKey = return . toJSString
 
 instance Monad m => FromObjectKey m String where
-  fromObjectKey = return . Just
+  fromObjectKey = return . Just . fromJSString
 
 {-------------------------------------------------------------------------------
   ToJSON and FromJSON instances
@@ -107,10 +107,10 @@ instance Monad m => FromJSON m JSValue where
   fromJSON = return
 
 instance Monad m => ToJSON m String where
-  toJSON = return . JSString
+  toJSON = return . JSString . toJSString
 
 instance ReportSchemaErrors m => FromJSON m String where
-  fromJSON (JSString str) = return str
+  fromJSON (JSString str) = return (fromJSString str)
   fromJSON val            = expectedButGotValue "string" val
 
 instance Monad m => ToJSON m Int54 where
@@ -142,7 +142,7 @@ instance ( Monad m
          ) => ToJSON m (Map k a) where
   toJSON = liftM JSObject . mapM aux . Map.toList
     where
-      aux :: (k, a) -> m (String, JSValue)
+      aux :: (k, a) -> m (JSString, JSValue)
       aux (k, a) = do k' <- toObjectKey k; a' <- toJSON a; return (k', a')
 
 instance ( ReportSchemaErrors m
@@ -154,7 +154,7 @@ instance ( ReportSchemaErrors m
       obj <- fromJSObject enc
       Map.fromList . catMaybes <$> mapM aux obj
     where
-      aux :: (String, JSValue) -> m (Maybe (k, a))
+      aux :: (JSString, JSValue) -> m (Maybe (k, a))
       aux (k, a) = knownKeys <$> fromObjectKey k <*> fromJSON a
       knownKeys :: Maybe k -> a -> Maybe (k, a)
       knownKeys Nothing  _ = Nothing
@@ -165,13 +165,13 @@ instance ( ReportSchemaErrors m
   Utility
 -------------------------------------------------------------------------------}
 
-fromJSObject :: ReportSchemaErrors m => JSValue -> m [(String, JSValue)]
+fromJSObject :: ReportSchemaErrors m => JSValue -> m [(JSString, JSValue)]
 fromJSObject (JSObject obj) = return obj
 fromJSObject val            = expectedButGotValue "object" val
 
 -- | Extract a field from a JSON object
 fromJSField :: (ReportSchemaErrors m, FromJSON m a)
-            => JSValue -> String -> m a
+            => JSValue -> JSString -> m a
 fromJSField val nm = do
     obj <- fromJSObject val
     case lookup nm obj of
@@ -179,17 +179,17 @@ fromJSField val nm = do
       Nothing  -> unknownField nm
 
 fromJSOptField :: (ReportSchemaErrors m, FromJSON m a)
-               => JSValue -> String -> m (Maybe a)
+               => JSValue -> JSString -> m (Maybe a)
 fromJSOptField val nm = do
     obj <- fromJSObject val
     case lookup nm obj of
       Just fld -> Just <$> fromJSON fld
       Nothing  -> return Nothing
 
-mkObject :: forall m. Monad m => [(String, m JSValue)] -> m JSValue
+mkObject :: forall m. Monad m => [(JSString, m JSValue)] -> m JSValue
 mkObject = liftM JSObject . sequenceFields
   where
-    sequenceFields :: [(String, m JSValue)] -> m [(String, JSValue)]
+    sequenceFields :: [(JSString, m JSValue)] -> m [(JSString, JSValue)]
     sequenceFields []               = return []
     sequenceFields ((fld,val):flds) = do val' <- val
                                          flds' <- sequenceFields flds
